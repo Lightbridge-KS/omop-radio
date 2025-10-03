@@ -1,0 +1,241 @@
+# Adding `Age`
+
+::: {.callout-note appearance="default" collapse="false"}
+**Q:** Here I search "Age" in the Athena. I want to add Age to the OMOP, which table and column should I put?
+:::
+
+
+
+### Recommended Approach: Calculate from Person Table
+
+**Age is typically NOT stored directly** in OMOP. Instead, it's calculated from the `Person` table:
+
+```
+Person Table (Standard Approach)
+├── person_id
+├── birth_datetime  ← Store date of birth here
+├── year_of_birth   ← Required
+├── month_of_birth
+└── day_of_birth
+
+Then calculate age as: current_date - birth_datetime
+```
+
+### Alternative: Store as Measurement (If Explicitly Recorded)
+
+If age was explicitly recorded at a specific timepoint (e.g., "Patient age at imaging: 45 years"), use the **Measurement** table:
+
+```
+Measurement Table
+├── measurement_id (PK)
+├── person_id (FK)
+├── measurement_concept_id     → 4265453 (Age from SNOMED)
+├── measurement_date           → When age was recorded
+├── measurement_type_concept_id → Provenance (EHR, etc.)
+├── value_as_number            → 45 (the age value)
+├── unit_concept_id            → 8512 (years)
+└── measurement_source_value   → "Age"
+```
+
+## Age in Measurement Table
+
+### Recommended Solution: Store Age in Measurement Table
+
+Since age is explicitly recorded (not calculated from birth date), store it as a **Measurement**:
+
+```
+Measurement Table
+├── measurement_id (PK)          → Auto-generated unique ID
+├── person_id (FK)               → Links to Person table
+├── measurement_concept_id       → 4265453 (Age - SNOMED 397669002)
+├── measurement_date             → Date when age was recorded
+├── measurement_datetime         → Include time if available
+├── measurement_type_concept_id  → 32817 (EHR) or appropriate provenance
+├── value_as_number              → 45 (actual age value)
+├── value_as_concept_id          → NULL (age is numeric)
+├── unit_concept_id              → 8512 (year) or 8734 (years)
+├── range_low                    → NULL (or reference range if relevant)
+├── range_high                   → NULL
+├── provider_id                  → NULL or provider who recorded
+├── visit_occurrence_id (FK)     → Links to visit
+└── measurement_source_value     → "Age" or original source text
+```
+
+### For Medical Imaging: Link via Image_feature
+
+When age is an imaging-related attribute:
+
+```
+Image_feature Table
+├── image_feature_id (PK)
+├── person_id (FK)
+├── image_occurrence_id (FK)            → Links to specific imaging study
+├── image_feature_event_field_concept_id → 5001 (Measurement domain)
+├── image_feature_event_id              → measurement_id from above
+├── image_feature_concept_id            → 4265453 (Age)
+├── image_feature_type_concept_id       → 32817 (EHR) or appropriate type
+└── anatomic_site_concept_id            → NULL (not applicable for age)
+```
+
+### ASCII Diagram: Data Flow
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Person Table (Anonymized)                           │
+│  - person_id: 1234                                  │
+│  - birth_datetime: NULL (PDPA compliance)           │
+│  - year_of_birth: NULL                              │
+└──────────────────┬──────────────────────────────────┘
+                   │
+                   ├──────────────────────────────────┐
+                   │                                  │
+       ┌───────────▼────────────┐      ┌──────────────▼──────────────┐
+       │ Image_occurrence       │      │ Measurement                  │
+       │  - image_occurrence_id │      │  - measurement_id: 5001      │
+       │  - person_id: 1234     │      │  - person_id: 1234           │
+       │  - procedure_occ_id    │      │  - concept_id: 4265453 (Age) │
+       │  - image_date          │      │  - value_as_number: 45       │
+       └───────────┬────────────┘      │  - unit_concept_id: 8512     │
+                   │                   │  - measurement_date          │
+                   │                   └──────────────┬───────────────┘
+                   │                                  │
+       ┌───────────▼──────────────────────────────────▼───────────────┐
+       │ Image_feature                                                │
+       │  - image_feature_id: 9001                                    │
+       │  - person_id: 1234                                           │
+       │  - image_occurrence_id → Links to imaging study              │
+       │  - image_feature_event_field_concept_id: 5001 (Measurement)  │
+       │  - image_feature_event_id: 5001 → Links to measurement_id    │
+       │  - image_feature_concept_id: 4265453 (Age)                   │
+       └──────────────────────────────────────────────────────────────┘
+```
+
+### Python Implementation Example
+
+```python
+import pandas as pd
+from datetime import datetime
+
+# Example: Patient age at imaging = 45 years
+def insert_age_measurement(
+    person_id: int,
+    age_value: float,
+    measurement_date: str,
+    visit_occurrence_id: int = None
+) -> int:
+    """
+    Insert age as measurement for PDPA compliance
+    Returns: measurement_id
+    """
+    
+    measurement_data = {
+        'measurement_id': None,  # Auto-generated
+        'person_id': person_id,
+        'measurement_concept_id': 4265453,  # Age (SNOMED)
+        'measurement_date': measurement_date,
+        'measurement_datetime': f"{measurement_date} 00:00:00",
+        'measurement_type_concept_id': 32817,  # EHR
+        'value_as_number': age_value,
+        'value_as_concept_id': None,
+        'unit_concept_id': 8512,  # year
+        'range_low': None,
+        'range_high': None,
+        'provider_id': None,
+        'visit_occurrence_id': visit_occurrence_id,
+        'measurement_source_value': 'Age',
+        'measurement_source_concept_id': 0,
+        'unit_source_value': 'years',
+        'value_source_value': str(age_value)
+    }
+    
+    # Insert into database
+    # measurement_id = db.insert('measurement', measurement_data)
+    
+    return measurement_id
+
+
+def link_age_to_imaging(
+    image_occurrence_id: int,
+    measurement_id: int,
+    person_id: int
+) -> int:
+    """
+    Link age measurement to imaging study via Image_feature
+    Returns: image_feature_id
+    """
+    
+    image_feature_data = {
+        'image_feature_id': None,  # Auto-generated
+        'person_id': person_id,
+        'image_occurrence_id': image_occurrence_id,
+        'image_feature_event_field_concept_id': 5001,  # Measurement
+        'image_feature_event_id': measurement_id,
+        'image_feature_concept_id': 4265453,  # Age
+        'image_feature_type_concept_id': 32817,  # EHR
+        'image_finding_concept_id': None,
+        'image_finding_id': None,
+        'anatomic_site_concept_id': None,
+        'alg_system': None,
+        'alg_datetime': None
+    }
+    
+    # Insert into database
+    # image_feature_id = db.insert('image_feature', image_feature_data)
+    
+    return image_feature_id
+
+
+# Usage Example
+person_id = 1234
+age_at_imaging = 45
+imaging_date = "2021-10-14"
+image_occurrence_id = 37899
+
+# Step 1: Insert age as measurement
+measurement_id = insert_age_measurement(
+    person_id=person_id,
+    age_value=age_at_imaging,
+    measurement_date=imaging_date
+)
+
+# Step 2: Link to imaging study
+image_feature_id = link_age_to_imaging(
+    image_occurrence_id=image_occurrence_id,
+    measurement_id=measurement_id,
+    person_id=person_id
+)
+```
+
+### Important Notes for PDPA Compliance
+
+1. **Person Table**: Leave birth-related fields as NULL
+   ```python
+   person = {
+       'person_id': 1234,
+       'birth_datetime': None,  # PDPA - not collected
+       'year_of_birth': None,
+       'month_of_birth': None,
+       'day_of_birth': None
+   }
+   ```
+
+2. **Age at Each Encounter**: Record age at each visit/imaging event since you can't calculate it
+
+3. **Temporal Analysis**: Use recorded age + time differences between visits for longitudinal studies
+
+### Query Example: Find Patients by Age Range
+
+```sql
+SELECT DISTINCT
+    p.person_id,
+    m.value_as_number AS age,
+    io.image_occurrence_date,
+    io.modality_concept_id
+FROM person p
+JOIN measurement m ON p.person_id = m.person_id
+JOIN image_feature if ON m.measurement_id = if.image_feature_event_id
+JOIN image_occurrence io ON if.image_occurrence_id = io.image_occurrence_id
+WHERE m.measurement_concept_id = 4265453  -- Age
+  AND m.value_as_number BETWEEN 40 AND 50  -- Age range
+  AND io.modality_concept_id = 4337057;    -- CT modality
+```

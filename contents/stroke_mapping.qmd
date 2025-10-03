@@ -1,0 +1,349 @@
+# Stroke Dataset Mapping
+
+I'm trying to map the Stroke Dataset in my hospital to OMOP. 
+
+Here is the data standard of each columns. Please recommend the appropriate columns and tables for each field. 
+
+
+
+| Columns                 | concept_id | Values | Values Type | concept_id | Comment                                   |
+| ----------------------- | ---------- | ------ | ----------- | ---------- | ----------------------------------------- |
+| image_series_UID        | -          |        | string      |            | table: IMAGE_OCCURRENCE                   |
+| Sex                     | 4083588    | M      | string      | 8507       |                                           |
+|                         |            | F      | string      | 8532       |                                           |
+| Age                     | 4265453    |        | Numeric     | 4265453    |                                           |
+| is_stroke               | 4045735    | TRUE   | Boolean     | 4045735    |                                           |
+|                         |            | FALSE  | Boolean     | -          |                                           |
+| thrombus                | 4245118    | TRUE   | Boolean     | 4245118    |                                           |
+|                         |            | FALSE  | Boolean     | -          |                                           |
+| vascular_calcification  | 4030365    | TRUE   | Boolean     | 4030365    |                                           |
+|                         |            | FALSE  | Boolean     | -          |                                           |
+| acute_infarct           | 4207965    | TRUE   | Boolean     | 4207965    |                                           |
+|                         |            | FALSE  | Boolean     | -          |                                           |
+| nrrd_segmentations_link | custom     |        | string      |            | เป็น link ไปยัง .seg.nrrd file ใน OrthanC |
+| nrrd_dicom_link         | custom     |        | string      |            | เป็น link ไปยัง .dcm.nrrd file ใน OrthanC |
+
+
+## Overview
+
+Based on the uploaded paper, here's how to implement your stroke dataset mapping:
+
+### Table Structure Overview
+
+```
+┌─────────────────┐
+│     PERSON      │
+│  - person_id    │
+│  - gender       │◄────┐
+│  - birth_date   │     │
+└─────────────────┘     │
+                        │
+┌─────────────────────────────┐
+│  PROCEDURE_OCCURRENCE       │
+│  - procedure_occurrence_id  │
+│  - person_id                │
+│  - procedure_concept_id     │
+└─────────────────────────────┘
+           │
+           │ links to
+           ▼
+┌─────────────────────────────┐
+│   IMAGE_OCCURRENCE          │
+│  - image_occurrence_id (PK) │
+│  - person_id (FK)           │
+│  - procedure_occurrence_id  │
+│  - image_series_UID         │◄── Your: image_series_UID
+│  - image_study_UID          │
+│  - wadors_uri / local_path  │◄── Your: nrrd_dicom_link
+│  - modality_concept_id      │
+│  - anatomic_site_concept_id │
+└─────────────────────────────┘
+           │
+           │ links to
+           ▼
+┌─────────────────────────────┐
+│   IMAGE_FEATURE             │
+│  - image_feature_id (PK)    │
+│  - person_id (FK)           │
+│  - image_occurrence_id (FK) │
+│  - image_feature_concept_id │
+│  - image_feature_type       │
+│  - image_finding_concept_id │
+│  - alg_system               │◄── Your: nrrd_segmentations_link
+└─────────────────────────────┘
+           │
+           │ stores values in
+           ▼
+┌─────────────────────────────┐
+│  OBSERVATION / MEASUREMENT  │
+│  - observation_id (PK)      │
+│  - person_id (FK)           │
+│  - observation_concept_id   │
+│  - value_as_concept_id      │◄── Your: TRUE/FALSE findings
+└─────────────────────────────┘
+```
+
+### Field Mapping Recommendations
+
+####  Demographics (PERSON Table)
+
+```python
+# Sex → PERSON.gender_concept_id
+Sex: {
+    'M': 8507,
+    'F': 8532
+}
+
+# Age → Calculate birth_year from Age
+# PERSON.year_of_birth = current_year - Age
+```
+
+#### Image Series (IMAGE_OCCURRENCE Table)
+
+| Your Field | OMOP Field | Type | Notes |
+|------------|------------|------|-------|
+| image_series_UID | image_series_UID | VARCHAR(250) | Required |
+| nrrd_dicom_link | local_path or wadors_uri | VARCHAR(max) | Path to DICOM/NRRD |
+| - | modality_concept_id | INTEGER | Use CT modality concept |
+| - | anatomic_site_concept_id | INTEGER | Brain (4103720) |
+
+**Example Row:**
+
+```sql
+INSERT INTO IMAGE_OCCURRENCE (
+    image_occurrence_id,
+    person_id,
+    procedure_occurrence_id,
+    image_series_UID,
+    local_path,
+    image_occurrence_date,
+    modality_concept_id,
+    anatomic_site_concept_id
+) VALUES (
+    1001,
+    123,
+    5001,
+    'your_series_uid_here',
+    'http://orthanc/series/your_nrrd_dicom_link',
+    '2025-01-15',
+    44818796,  -- CT concept_id
+    4103720    -- Brain concept_id
+);
+```
+
+#### Imaging Findings (IMAGE_FEATURE + OBSERVATION Tables)
+
+For each Boolean finding (thrombus, vascular_calcification, acute_infarct):
+
+**Pattern:**
+
+```
+IMAGE_FEATURE (metadata) → OBSERVATION (actual value)
+```
+
+**Implementation for each finding:**
+
+```sql
+-- Example: thrombus = TRUE
+-- Step 1: Create IMAGE_FEATURE entry
+INSERT INTO IMAGE_FEATURE (
+    image_feature_id,
+    person_id,
+    image_occurrence_id,
+    image_feature_concept_id,      -- 4245118 (thrombus)
+    image_feature_type_concept_id, -- Type: AI algorithm
+    image_finding_concept_id,       -- NULL or grouping concept
+    anatomic_site_concept_id,       -- Specific location if available
+    alg_system,                     -- Link to segmentation
+    image_feature_event_field_concept_id,  -- Points to OBSERVATION
+    image_feature_event_id          -- Links to observation_id
+) VALUES (
+    2001,
+    123,
+    1001,
+    4245118,  -- thrombus concept
+    32865,    -- EHR system (or custom AI algorithm type)
+    NULL,
+    NULL,
+    'http://orthanc/segmentation/your_nrrd_segmentations_link',
+    27,       -- observation_id from concept table
+    3001
+);
+
+-- Step 2: Store actual value in OBSERVATION
+INSERT INTO OBSERVATION (
+    observation_id,              -- 3001 (same as image_feature_event_id)
+    person_id,
+    observation_concept_id,      -- 4245118 (thrombus)
+    observation_date,
+    observation_type_concept_id, -- 32865 (EHR system)
+    value_as_concept_id          -- 4188539 (Yes/TRUE) or NULL (No/FALSE)
+) VALUES (
+    3001,
+    123,
+    4245118,
+    '2025-01-15',
+    32865,
+    4188539  -- Use 4188539 for TRUE, NULL for FALSE
+);
+```
+
+#### Complete Mapping Table
+
+| Your Column | Primary Table | Secondary Table | Concept ID (Column) | Value Concept ID | Notes |
+|-------------|---------------|-----------------|---------------------|------------------|-------|
+| image_series_UID | IMAGE_OCCURRENCE | - | - | - | Primary key reference |
+| Sex | PERSON | - | gender_concept_id | 8507/8532 | Demographics |
+| Age | PERSON | - | year_of_birth | calculated | Demographics |
+| is_stroke | CONDITION_OCCURRENCE | IMAGE_FEATURE | 4045735 | 4045735 if TRUE | Diagnosis |
+| thrombus | IMAGE_FEATURE | OBSERVATION | 4245118 | 4188539 if TRUE | Imaging finding |
+| vascular_calcification | IMAGE_FEATURE | OBSERVATION | 4030365 | 4188539 if TRUE | Imaging finding |
+| acute_infarct | IMAGE_FEATURE | OBSERVATION | 4207965 | 4188539 if TRUE | Imaging finding |
+| nrrd_segmentations_link | IMAGE_FEATURE | - | alg_system | - | Segmentation reference |
+| nrrd_dicom_link | IMAGE_OCCURRENCE | - | local_path/wadors_uri | - | DICOM reference |
+
+### Python Implementation Example## SQL Schema and Examples## Key Implementation Guidelines
+
+#### **Boolean Findings Handling**
+
+```
+For Boolean findings (thrombus, vascular_calcification, acute_infarct):
+
+TRUE:  IMAGE_FEATURE → OBSERVATION (with value_as_concept_id = 4188539)
+FALSE: IMAGE_FEATURE only (no OBSERVATION) OR skip entirely
+```
+
+#### **Provenance Chain**
+
+```
+DICOM Image → IMAGE_OCCURRENCE.local_path
+               ↓
+AI Processing → IMAGE_FEATURE.alg_system (segmentation)
+               ↓
+Result Value → OBSERVATION.value_as_concept_id
+```
+
+#### **Data Flow Diagram**
+
+```
+Your Stroke Dataset
+        ↓
+┌───────────────────────────────────┐
+│  Extract & Transform              │
+│  - Demographics → PERSON          │
+│  - Series UID → IMAGE_OCCURRENCE  │
+│  - Findings → IMAGE_FEATURE       │
+│  - Values → OBSERVATION           │
+└───────────────────────────────────┘
+        ↓
+┌───────────────────────────────────┐
+│  Link Relationships               │
+│  - person_id connects all tables  │
+│  - image_occurrence_id links      │
+│    images to features             │
+│  - image_feature_event_id links   │
+│    features to observations       │
+└───────────────────────────────────┘
+        ↓
+    OMOP CDM Database
+```
+
+## `.dcm.nrrd` vs `.seg.nrrd` Link
+
+> Better Approach: Treat Segmentation as Secondary IMAGE_OCCURRENCE
+
+Looking at DICOM standards and the paper more carefully, **segmentation objects ARE a type of DICOM object**. The better approach is:
+
+### Revised Mapping Strategy
+
+```
+Original CT Scan → IMAGE_OCCURRENCE #1 (modality: CT)
+                        ↓
+Segmentation Masks → IMAGE_OCCURRENCE #2 (modality: SEG)
+                        ↓
+Extracted Features → IMAGE_FEATURE → OBSERVATION
+```
+
+Here's why this is better:Now let me give you **updated implementation code** for both approaches:Let me create a visual comparison:
+
+```
+═══════════════════════════════════════════════════════════════
+              APPROACH A vs APPROACH B
+═══════════════════════════════════════════════════════════════
+
+APPROACH A: Segmentation as IMAGE_OCCURRENCE (More Complete)
+────────────────────────────────────────────────────────────
+Your Files:
+  nrrd_dicom_link        → IMAGE_OCCURRENCE #1 (CT)
+  nrrd_segmentations_link → IMAGE_OCCURRENCE #2 (SEG)
+
+Data Flow:
+┌─────────────────────┐
+│ IMAGE_OCCURRENCE #1 │
+│ Modality: CT        │
+│ local_path:         │
+│  ct_12345.nrrd      │ ← Your nrrd_dicom_link
+└─────────────────────┘
+          │
+          │ derived from
+          ▼
+┌─────────────────────┐
+│ IMAGE_OCCURRENCE #2 │
+│ Modality: SEG       │
+│ local_path:         │
+│  seg_12345.nrrd     │ ← Your nrrd_segmentations_link
+└─────────────────────┘
+          │
+          │ extracts features
+          ▼
+┌─────────────────────┐
+│ IMAGE_FEATURE       │
+│ links to: SEG (#2)  │
+│ alg_system:         │
+│  "AI_model_v1.0"    │ ← Pure algorithm info
+└─────────────────────┘
+
+
+APPROACH B: Segmentation in alg_system (Simpler)
+────────────────────────────────────────────────
+Your Files:
+  nrrd_dicom_link        → IMAGE_OCCURRENCE (CT only)
+  nrrd_segmentations_link → IMAGE_FEATURE.alg_system
+
+Data Flow:
+┌─────────────────────┐
+│ IMAGE_OCCURRENCE    │
+│ Modality: CT        │
+│ local_path:         │
+│  ct_12345.nrrd      │ ← Your nrrd_dicom_link
+└─────────────────────┘
+          │
+          │ extracts features
+          ▼
+┌─────────────────────┐
+│ IMAGE_FEATURE       │
+│ links to: CT        │
+│ alg_system:         │
+│  "AI_v1.0 |         │
+│   seg_12345.nrrd"   │ ← Mixed: algorithm + file
+└─────────────────────┘   Your nrrd_segmentations_link
+
+═══════════════════════════════════════════════════════════════
+```
+
+### Summary: Why I Mapped This Way
+
+#### Better Mapping (What I Recommend Now)
+
+```python
+# Approach A (Recommended for research)
+nrrd_dicom_link → IMAGE_OCCURRENCE #1.local_path      # ✅ Source CT
+nrrd_segmentations_link → IMAGE_OCCURRENCE #2.local_path  # ✅ Derived SEG
+alg_system → "Algorithm_name_v1.0"                     # ✅ Pure metadata
+
+# Approach B (OK for simpler cases)  
+nrrd_dicom_link → IMAGE_OCCURRENCE.local_path         # ✅ Source CT
+nrrd_segmentations_link → IMAGE_FEATURE.alg_system    # ⚠️ Combined with algo info
+```
+
+**Key Insight:** In DICOM/medical imaging, segmentations are **first-class objects** (like images), not just metadata. Treating them as IMAGE_OCCURRENCE entries is more aligned with imaging standards.

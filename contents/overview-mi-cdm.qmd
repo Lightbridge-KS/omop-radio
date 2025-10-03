@@ -1,0 +1,158 @@
+# Overview MI-CDM
+
+::: {.callout-note appearance="default" collapse="false"}
+**Q:** Show me the overview summary of each tables from the OMOP CDM, about what each table represents, and what data it should be stored.
+:::
+Based on the paper, here's a comprehensive overview of the key tables, focusing on the new Medical Imaging extensions:
+
+## **New Medical Imaging Extension Tables**
+
+### **1. IMAGE_OCCURRENCE Table**
+
+**What it represents:**
+- Imaging events/studies at the DICOM study or series level
+- Links to actual DICOM images stored in PACS/VNA systems
+- Captures image acquisition parameters
+
+**Key data stored:**
+```
+Core Identifiers:
+├── image_occurrence_id (PK)
+├── person_id (FK → Person)
+├── procedure_occurrence_id (FK → Procedure_occurrence)
+└── visit_occurrence_id (FK → Visit_occurrence)
+
+DICOM References:
+├── image_study_UID (DICOM Study UID)
+├── image_series_UID (DICOM Series UID)
+├── wadors_uri (Web access URL to DICOM objects)
+└── local_path (UNC path to image files)
+
+Clinical Metadata:
+├── anatomic_site_concept_id (body part imaged)
+├── modality_concept_id (CT, MR, PT, etc.)
+└── image_occurrence_date
+```
+
+**Purpose:**
+- Provides data lineage to DICOM images
+- Links imaging procedures to actual pixel data
+- Enables cohort selection based on acquisition parameters
+
+---
+
+### **2. IMAGE_FEATURE Table**
+
+**What it represents:**
+- Imaging features/findings extracted from images
+- Provenance tracking for AI-generated measurements
+- Links between imaging features and clinical domain tables
+
+**Key data stored:**
+```
+Core Identifiers:
+├── image_feature_id (PK)
+├── person_id (FK → Person)
+└── image_occurrence_id (FK → Image_occurrence)
+
+Feature Information:
+├── image_feature_concept_id (what was measured - LOINC/RadLex)
+├── image_feature_type_concept_id (how it was derived)
+├── image_finding_concept_id (grouping - e.g., "nodule")
+└── image_finding_id (links related features)
+
+Location:
+└── anatomic_site_concept_id (specific location of finding)
+
+Clinical Data Link:
+├── image_feature_event_field_concept_id (which domain table)
+└── image_feature_event_id (ID in that table)
+
+Algorithm Provenance:
+├── alg_system (algorithm URI with version)
+└── alg_datetime (when processed)
+```
+
+**Purpose:**
+- Stores AI/algorithm-derived measurements
+- Links imaging features to clinical domain tables (Measurement, Observation)
+- Enables longitudinal tracking of imaging findings
+
+---
+
+## **Key Existing OMOP CDM Tables (for Context)**
+
+### **Clinical Data Tables:**
+
+**PROCEDURE_OCCURRENCE**
+- Procedures performed on patients
+- Links to Image_occurrence via CPT/procedure codes
+- Example: "CT Chest with contrast"
+
+**MEASUREMENT**
+- Quantitative clinical measurements
+- Stores actual imaging feature values (e.g., nodule size = 8mm)
+- Links back to Image_feature table
+
+**CONDITION_OCCURRENCE**
+- Patient diagnoses/conditions
+- Can link to imaging findings (e.g., "lung cancer")
+
+**OBSERVATION**
+- Clinical observations and assessments
+- Can store qualitative imaging findings
+
+**EPISODE & EPISODE_EVENT**
+- Groups related events longitudinally
+- Tracks imaging findings over time (e.g., nodule progression)
+
+---
+
+## **Relationship Diagram (ASCII)**
+
+```
+Person
+  │
+  ├──────────────────────────────────────┐
+  │                                      │
+Visit_occurrence              Procedure_occurrence
+  │                                      │
+  │                                      │ (many-to-many)
+  │                                      ▼
+  │                          ┌─── Image_occurrence ◄─── DICOM Storage
+  │                          │           │            (PACS/VNA)
+  │                          │           │
+  │                          │           │ (one-to-many)
+  │                          │           ▼
+  │                          │   Image_feature
+  │                          │           │
+  │                          │           │ (one-to-one)
+  │                          │           ▼
+  └──────────────────────────┴─── Measurement/Observation
+                                        (actual values)
+
+Episode ◄────────────────────────────────┐
+  │                                      │
+Episode_event ──► links multiple Image_features
+                  for longitudinal tracking
+```
+
+---
+
+## **Example Use Case: Lung Nodule Tracking**
+
+**Image_occurrence:**
+- Records CT chest scan (study_UID, series_UID)
+- Captures: modality=CT, anatomic_site="Lung", date
+
+**Image_feature (for one nodule):**
+- Feature 1: Size = 8mm → stored in Measurement table
+- Feature 2: Density = "solid" → stored in Observation table
+- Feature 3: Location = "Right upper lobe"
+- `image_finding_id` groups these 3 features as one nodule
+- `alg_system` = "NodeDetectorAI_v2.1"
+
+**Episode tracking:**
+- Same nodule measured at 3 different time points
+- Episode links all 3 image_finding_ids
+- Enables doubling time calculation
