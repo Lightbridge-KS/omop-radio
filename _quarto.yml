@@ -16,7 +16,7 @@ book:
         - "contents/stroke_mapping.qmd"
     - part: Mapping by Variable
       chapters: 
-        - "contents/adding_age.qmd"
+        - "contents/map_age.qmd"
 
 
 bibliography: references.bib

@@ -1,0 +1,209 @@
+# Map `Age`
+
+
+## Where to Store Age Information
+
+### Option 1: **MEASUREMENT Table** (Recommended)
+
+Age at the time of imaging should be stored in the **MEASUREMENT** table:
+
+```
+MEASUREMENT table:
+├─ measurement_concept_id: 4265453 (Age - SNOMED concept)
+├─ value_as_number: [patient age value]
+├─ unit_concept_id: 9448 (year) or appropriate unit
+├─ measurement_date: [date of the imaging study]
+├─ measurement_datetime: [datetime of the imaging study]
+└─ person_id: [patient identifier]
+```
+
+### Option 2: **OBSERVATION Table** (Alternative)
+
+You could also use the **OBSERVATION** table if you prefer to treat age as an observational fact:
+
+```
+OBSERVATION table:
+├─ observation_concept_id: 4265453 (Age)
+├─ value_as_number: [patient age value]
+├─ observation_date: [date of the imaging study]
+└─ person_id: [patient identifier]
+```
+
+## Integration with Medical Imaging Extension
+
+Since you're working with the Medical Imaging Extension, here's how age relates to the new tables:
+
+```
+Image_occurrence
+       │
+       ├─ image_occurrence_date
+       │
+       └─ Links to → Procedure_occurrence
+                            │
+                            └─ Same date/visit context
+                                      │
+                    MEASUREMENT (Age at imaging time)
+                    ├─ measurement_date (same as image_occurrence_date)
+                    └─ measurement_concept_id: 4265453
+```
+
+## Python Implementation Example
+
+Here's a practical Python script to map age data:
+
+```python
+import pandas as pd
+from datetime import datetime
+
+def map_age_to_omop(imaging_data):
+    """
+    Map patient age at imaging to OMOP MEASUREMENT table
+    
+    Parameters:
+    imaging_data: DataFrame with columns [person_id, age_at_exam, exam_date, image_occurrence_id]
+    """
+    
+    measurement_records = []
+    
+    for idx, row in imaging_data.iterrows():
+        measurement_record = {
+            'measurement_id': generate_unique_id(),  # Your ID generation logic
+            'person_id': row['person_id'],
+            'measurement_concept_id': 4265453,  # Age concept
+            'measurement_date': row['exam_date'],
+            'measurement_datetime': row['exam_date'],  # Add time if available
+            'measurement_type_concept_id': 44818702,  # Derived value
+            'value_as_number': row['age_at_exam'],
+            'value_as_concept_id': None,
+            'unit_concept_id': 9448,  # Year
+            'range_low': None,
+            'range_high': None,
+            'provider_id': None,
+            'visit_occurrence_id': row.get('visit_occurrence_id'),
+            'measurement_source_value': 'Age at imaging',
+            'measurement_source_concept_id': None,
+            'unit_source_value': 'years',
+            'value_source_value': str(row['age_at_exam'])
+        }
+        measurement_records.append(measurement_record)
+    
+    return pd.DataFrame(measurement_records)
+
+# Example usage
+imaging_df = pd.DataFrame({
+    'person_id': [1001, 1002, 1003],
+    'age_at_exam': [45, 62, 38],
+    'exam_date': ['2024-01-15', '2024-02-20', '2024-03-10'],
+    'image_occurrence_id': [5001, 5002, 5003]
+})
+
+measurement_df = map_age_to_omop(imaging_df)
+print(measurement_df.head())
+```
+
+## Linking Age with Image_occurrence
+
+To maintain traceability between age and imaging studies:
+
+```python
+def link_age_to_imaging(measurement_df, image_occurrence_df):
+    """
+    Create linkage between age measurements and imaging occurrences
+    Uses date and person_id to establish relationship
+    """
+    
+    merged = pd.merge(
+        measurement_df,
+        image_occurrence_df,
+        on=['person_id', 'measurement_date'],  # Assuming exam_date matches
+        how='inner',
+        suffixes=('_measurement', '_image')
+    )
+    
+    return merged[['measurement_id', 'image_occurrence_id', 'person_id', 
+                   'value_as_number', 'measurement_date']]
+```
+
+## ASCII Diagram: Age in OMOP CDM with Imaging Extension
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         PERSON                               │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ person_id: 1001                                      │   │
+│  │ (No birth_datetime due to privacy)                   │   │
+│  └─────────────────────────────────────────────────────┘   │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+         ┌─────────────┴─────────────┐
+         │                           │
+         ▼                           ▼
+┌──────────────────┐        ┌──────────────────┐
+│ PROCEDURE_       │        │ IMAGE_           │
+│ OCCURRENCE       │◄───────┤ OCCURRENCE       │
+│                  │        │                  │
+│ procedure_id:    │        │ image_occ_id:    │
+│   34445          │        │   5001           │
+│ date: 2024-01-15 │        │ date: 2024-01-15 │
+└────────┬─────────┘        │ modality: CT     │
+         │                  │ anatomic_site:   │
+         │                  │   Chest          │
+         │                  └──────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│        MEASUREMENT                  │
+│  ┌──────────────────────────────┐  │
+│  │ measurement_concept_id:       │  │
+│  │   4265453 (Age - SNOMED)      │  │
+│  │ value_as_number: 45           │  │
+│  │ unit_concept_id: 9448 (year)  │  │
+│  │ date: 2024-01-15              │  │
+│  │ person_id: 1001               │  │
+│  └──────────────────────────────┘  │
+└─────────────────────────────────────┘
+```
+
+## Key Concepts
+
+**Important concept IDs:**
+- `4265453`: Age (from SNOMED)
+- `9448`: year (unit)
+- `44818702`: Derived value (for measurement_type_concept_id)
+
+## Important Considerations
+
+1. **Date Alignment**: Ensure the `measurement_date` matches the `image_occurrence_date` to maintain temporal accuracy
+
+2. **Type Concept**: Use `measurement_type_concept_id = 44818702` (Derived value) since age is calculated/derived from the imaging date
+
+3. **Privacy Compliance**: This approach respects privacy by not storing birth dates while maintaining analytical capability
+
+4. **Unit Standardization**: Always specify units clearly (years, months, days) using the appropriate concept_id
+
+5. **Multiple Imaging Studies**: A patient can have multiple age measurements, one for each imaging study date
+
+## Querying Age with Imaging Data
+
+Example SQL query to retrieve age with imaging information:
+
+```sql
+SELECT 
+    p.person_id,
+    io.image_occurrence_id,
+    io.image_occurrence_date,
+    io.modality_concept_id,
+    m.value_as_number as age_at_imaging,
+    c.concept_name as modality_name
+FROM person p
+INNER JOIN image_occurrence io ON p.person_id = io.person_id
+INNER JOIN measurement m ON p.person_id = m.person_id 
+    AND io.image_occurrence_date = m.measurement_date
+    AND m.measurement_concept_id = 4265453  -- Age concept
+INNER JOIN concept c ON io.modality_concept_id = c.concept_id
+WHERE io.modality_concept_id IN (
+    SELECT concept_id FROM concept 
+    WHERE vocabulary_id = 'DICOM' 
+    AND concept_code = 'CT'
+);
+```
