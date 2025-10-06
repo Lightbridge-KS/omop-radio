@@ -1,0 +1,164 @@
+# Map BI-RADS — Composition
+
+## Mapping Strategy
+
+Breast composition is an **imaging feature** extracted from mammography, so you'll use:
+
+1. **Image_feature table** - Links the feature to the source image
+2. **Measurement or Observation table** - Stores the actual breast composition value
+
+## Implementation Example
+
+Here's how the data flows through the tables:
+
+```
+┌─────────────────────┐
+│ Procedure_          │  
+│ occurrence          │ ← Mammography procedure (CPT code)
+└──────┬──────────────┘
+       │
+       ↓
+┌─────────────────────┐
+│ Image_              │
+│ occurrence          │ ← Links to DICOM mammogram study/series
+└──────┬──────────────┘
+       │
+       ↓
+┌─────────────────────┐
+│ Image_              │ ← Links feature to source image
+│ feature             │    & measurement table entry
+└──────┬──────────────┘
+       │
+       ↓
+┌─────────────────────┐
+│ Measurement         │ ← Stores the actual breast composition
+│ or Observation      │    value (concept_id: 4032368, etc.)
+└─────────────────────┘
+```
+
+## Detailed Table Mapping
+
+### 1. **Measurement Table** (Recommended)
+Store the breast composition assessment here:
+
+| Field | Value | Example |
+|-------|-------|---------|
+| measurement_id | Auto-generated | 12345 |
+| person_id | Patient ID | 1234 |
+| measurement_concept_id | **4030768** | Breast composition |
+| measurement_date | Exam date | 2024-01-15 |
+| measurement_datetime | Exam datetime | 2024-01-15 10:30:00 |
+| value_as_concept_id | **4032368, 4031228, 4031229, or 4031230** | e.g., 4031229 (Heterogeneously dense) |
+| measurement_type_concept_id | Provenance code | 32817 (EHR) or custom for "AI algorithm" |
+| visit_occurrence_id | Visit ID | 5678 |
+
+### 2. **Image_feature Table**
+Links the measurement to the source mammogram:
+
+| Field | Value | Example |
+|-------|-------|---------|
+| image_feature_id | Auto-generated | 9876 |
+| person_id | Patient ID | 1234 |
+| image_occurrence_id | Links to mammogram | 4567 |
+| **image_feature_event_field_concept_id** | **"Measurement"** | Points to Measurement table |
+| **image_feature_event_id** | **12345** | measurement_id from above |
+| image_feature_concept_id | **4030768** | Breast composition |
+| image_feature_type_concept_id | How it was obtained | Custom concept for "Radiologist assessment" or "AI algorithm" |
+| anatomic_site_concept_id | 4180938 | Breast structure (SNOMED) |
+| alg_system | Algorithm URI (if AI) | "https://vendor.com/birads-ai/v2.1" |
+| alg_datetime | Processing time | 2024-01-15 10:35:00 |
+
+### 3. **Image_occurrence Table**
+Describes the mammogram study:
+
+| Field | Value | Example |
+|-------|-------|---------|
+| image_occurrence_id | Auto-generated | 4567 |
+| person_id | Patient ID | 1234 |
+| procedure_occurrence_id | Links to procedure | 3456 |
+| anatomic_site_concept_id | 4180938 | Breast structure |
+| modality_concept_id | DICOM modality | MG (Mammography) |
+| image_study_UID | DICOM Study UID | 1.2.840... |
+| image_series_UID | DICOM Series UID | 1.2.840... |
+| image_occurrence_date | Exam date | 2024-01-15 |
+
+## Python Implementation Example
+
+```python
+import pandas as pd
+
+# Your source data
+birads_data = {
+    'person_id': [1234],
+    'dense': [3],  # Heterogeneously dense
+    'exam_date': ['2024-01-15'],
+    'study_uid': ['1.2.840.113619.2.xxx'],
+    'series_uid': ['1.2.840.113619.2.yyy']
+}
+
+# Mapping dense values to SNOMED concepts
+dense_mapping = {
+    1: 4032368,  # Almost entirely fat
+    2: 4031228,  # Scattered fibroglandular
+    3: 4031229,  # Heterogeneously dense
+    4: 4031230   # Extremely dense
+}
+
+# Create Measurement table entry
+measurement = pd.DataFrame({
+    'measurement_id': [12345],
+    'person_id': birads_data['person_id'],
+    'measurement_concept_id': [4030768],  # Breast composition
+    'measurement_date': birads_data['exam_date'],
+    'value_as_concept_id': [dense_mapping[birads_data['dense'][0]]],
+    'measurement_type_concept_id': [32817],  # EHR
+    'visit_occurrence_id': [5678]
+})
+
+# Create Image_occurrence entry
+image_occurrence = pd.DataFrame({
+    'image_occurrence_id': [4567],
+    'person_id': birads_data['person_id'],
+    'procedure_occurrence_id': [3456],
+    'anatomic_site_concept_id': [4180938],  # Breast
+    'modality_concept_id': ['MG'],  # Mammography
+    'image_study_UID': birads_data['study_uid'],
+    'image_series_UID': birads_data['series_uid'],
+    'image_occurrence_date': birads_data['exam_date']
+})
+
+# Create Image_feature entry (linking the two)
+image_feature = pd.DataFrame({
+    'image_feature_id': [9876],
+    'person_id': birads_data['person_id'],
+    'image_occurrence_id': [4567],
+    'image_feature_event_field_concept_id': ['Measurement'],
+    'image_feature_event_id': [12345],  # Links to measurement_id
+    'image_feature_concept_id': [4030768],  # Breast composition
+    'image_feature_type_concept_id': [32817],  # Or custom for AI
+    'anatomic_site_concept_id': [4180938]  # Breast
+})
+
+print("Measurement table:")
+print(measurement)
+print("\nImage_occurrence table:")
+print(image_occurrence)
+print("\nImage_feature table:")
+print(image_feature)
+```
+
+## Key Points
+
+1. **Clinical value goes in Measurement/Observation**: The actual breast composition category (dense=1,2,3,4) is stored as `value_as_concept_id` in the Measurement table
+
+2. **Image_feature provides provenance**: This table links the measurement back to the specific mammogram image and can track which algorithm/radiologist made the assessment
+
+3. **Image_occurrence links to DICOM**: This connects to the actual imaging study in your PACS/VNA system
+
+4. **Use standard vocabularies**: All the concept IDs you mentioned (4030768, 4032368, etc.) are already SNOMED codes in OMOP's vocabulary
+
+This design allows you to:
+- Query all patients with heterogeneously dense breasts
+- Track which algorithm version made the assessment
+- Link back to the source DICOM images
+- Perform cohort analysis using OHDSI tools like ATLAS
