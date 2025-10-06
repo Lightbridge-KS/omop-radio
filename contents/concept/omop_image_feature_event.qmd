@@ -1,0 +1,98 @@
+# `image_feature_event_field_*`
+
+::: {.callout-note appearance="default" collapse="false"}
+**Q:** In the paper, How do I use "image_feature_event_field_concept_id" from the Image_feature table?
+:::
+
+# Understanding `image_feature_event_field_concept_id`
+
+The `image_feature_event_field_concept_id` is a pointer field that tells you **which OMOP clinical domain table** contains the actual value of the imaging feature. It works in tandem with `image_feature_event_id`.
+
+## How It Works
+
+```
+Image_feature Table                 Clinical Domain Table
+┌─────────────────────────────┐    ┌──────────────────────────┐
+│ image_feature_id            │    │ measurement_id (PK)      │
+│ image_feature_concept_id    │    │ person_id                │
+│ image_feature_event_field_  │───▶│ measurement_concept_id   │
+│   concept_id = "Measurement"│    │ value_as_number          │
+│ image_feature_event_id = 123│───▶│ ...                      │
+└─────────────────────────────┘    └──────────────────────────┘
+```
+
+## Two-Part Reference System
+
+1. **`image_feature_event_field_concept_id`**: Specifies the domain table (e.g., Measurement, Observation, Condition_occurrence)
+2. **`image_feature_event_id`**: The primary key in that specific table
+
+## Practical Example from the Paper
+
+Looking at **Figure 3** in the paper, here's a lung nodule example:
+
+```python
+# Image_feature table row for nodule size
+{
+    'image_feature_id': 9625,
+    'person_id': 1234,
+    'image_occurrence_id': 37899,
+    'image_feature_event_field_concept_id': 'Measurement',  # Points to Measurement table
+    'image_feature_event_id': 1234,                         # measurement_id in Measurement table
+    'image_feature_concept_id': 'LOINC:33756-8',           # Nodule size
+    # ... other fields
+}
+
+# Corresponding Measurement table row
+{
+    'measurement_id': 1234,              # Matches image_feature_event_id
+    'person_id': 1234,
+    'measurement_concept_id': 'LOINC:33756-8',
+    'value_as_number': 8.0,              # 8 mm nodule
+    'unit_concept_id': 'mm',
+    # ... other fields
+}
+```
+
+## Why This Design?
+
+The paper explains this design choice on page 903:
+
+> "The Image_feature table contains information about the features extracted from the findings identified in an image... Thus, the Image_feature table has a **one-to-one relationship with clinical data tables**."
+
+**Benefits:**
+
+1. **Reuses existing OMOP infrastructure** - Leverages existing tools/queries that work with Measurement, Observation tables
+2. **Preserves provenance** - Links imaging features back to source images
+3. **Enables complex queries** - You can query imaging features alongside other clinical measurements
+4. **Follows OMOP conventions** - Similar pattern used for NLP-extracted features
+
+## Implementation Example
+
+Here's how you'd query this in SQL:
+
+```sql
+-- Get all nodule size measurements with their source images
+SELECT 
+    p.person_id,
+    io.image_study_UID,
+    io.image_series_UID,
+    m.value_as_number as nodule_size_mm,
+    if.image_finding_concept_id as finding_type,
+    if.anatomic_site_concept_id
+FROM Image_feature if
+JOIN Measurement m 
+    ON m.measurement_id = if.image_feature_event_id
+    AND if.image_feature_event_field_concept_id = 'Measurement'
+JOIN Image_occurrence io 
+    ON io.image_occurrence_id = if.image_occurrence_id
+JOIN Person p 
+    ON p.person_id = if.person_id
+WHERE if.image_feature_concept_id = 'LOINC:33756-8'  -- Nodule size
+```
+
+## Key Points
+
+- **Don't store feature values in Image_feature table** - they go in domain tables (Measurement, Observation, etc.)
+- **Image_feature is metadata** - it describes WHAT the feature is and WHERE it came from
+- **The actual feature VALUES** live in the appropriate clinical domain table
+- This enables you to use existing OMOP tools (like ATLAS) to work with imaging features
