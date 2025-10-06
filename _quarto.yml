@@ -13,8 +13,8 @@ book:
     - "contents/overview-mi-cdm.qmd"
     - part: Mapping by project
       chapters: 
-        - "contents/stroke_mapping.qmd"
-        - "contents/map_birads_composition.qmd"
+        - "contents/project/stroke_mapping.qmd"
+        - "contents/project/map_birads_composition.qmd"
     - part: Mapping by Variable
       chapters: 
         - "contents/map_age.qmd"
