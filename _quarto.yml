@@ -18,6 +18,7 @@ book:
     - part: Mapping by Variable
       chapters: 
         - "contents/map_age.qmd"
+        - "contents/map_sex.qmd"
     - part: Concept
       chapters: 
         - "contents/concept/omop_image_feature_event.qmd"

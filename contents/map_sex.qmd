@@ -1,0 +1,76 @@
+# Mapping Patient Sex
+
+Patient Sex should be mapped to the **Person** table in OMOP CDM. This is a core demographic attribute that belongs in the Person table, not in the imaging extension tables.
+
+## Mapping Details
+
+```
+OMOP Person Table
+┌─────────────────────────────────────┐
+│ Person                              │
+├─────────────────────────────────────┤
+│ person_id (PK)                      │
+│ gender_concept_id  ←─────────────── Map Patient Sex here
+│ year_of_birth                       │
+│ month_of_birth                      │
+│ day_of_birth                        │
+│ birth_datetime                      │
+│ race_concept_id                     │
+│ ethnicity_concept_id                │
+│ location_id                         │
+│ provider_id                         │
+│ care_site_id                        │
+│ person_source_value                 │
+│ gender_source_value  ←─────────────  Store original value "M"/"F" here
+│ gender_source_concept_id ←──────────  Store 4083588 here (if this is your source concept)
+│ ...                                 │
+└─────────────────────────────────────┘
+```
+
+## Field Mapping
+
+| DICOM/Source | OMOP Person Table Field | Value |
+|--------------|------------------------|-------|
+| Patient Sex = "M" | `gender_concept_id` | **8507** (MALE) |
+| Patient Sex = "F" | `gender_concept_id` | **8532** (FEMALE) |
+| Original value "M" or "F" | `gender_source_value` | "M" or "F" |
+| Source concept (optional) | `gender_source_concept_id` | 4083588 |
+
+## Example Record
+
+```sql
+-- Example: Female patient
+INSERT INTO Person (
+    person_id,
+    gender_concept_id,        -- Standard OMOP concept
+    gender_source_value,      -- Original source value
+    gender_source_concept_id, -- Source vocabulary concept (optional)
+    ...
+) VALUES (
+    12345,
+    8532,                     -- Female
+    'F',                      -- Original DICOM value
+    4083588,                  -- DICOM Patient Sex concept (if applicable)
+    ...
+);
+```
+
+## Connection to Imaging Tables
+
+The imaging extension tables (Image_occurrence and Image_feature) link back to the Person table via `person_id`:
+
+```
+Person (gender_concept_id: 8532)
+   ↓ person_id
+   ↓
+Image_occurrence (person_id: foreign key)
+   ↓
+Image_feature (person_id: foreign key)
+```
+
+## Important Notes
+
+1. **Do NOT store sex in imaging tables** - It's a person-level attribute, not an imaging-specific attribute
+2. **Use standard concept_ids** - Always use 8507 (Male) and 8532 (Female) in `gender_concept_id`
+3. **Preserve source values** - Keep original "M"/"F" in `gender_source_value` for data lineage
+4. **DICOM Patient Sex (0010,0040)** - If extracting from DICOM, this maps to the Person table, not Image_occurrence
