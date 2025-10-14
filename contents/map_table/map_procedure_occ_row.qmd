@@ -1,0 +1,39 @@
+# PROCEDURE_OCCURRENCE Mapping Ex
+
+I tried to map concept ID `396205005` (CT of brain without contrast) to the PROCEDURE_OCCURRENCE table. 
+
+Give an example of what values in each columns in this table should be.
+
+
+Looking at the OMOP CDM v5.4 structure for the **PROCEDURE_OCCURRENCE** table, here's an example of how to populate it for a CT brain without contrast (concept ID `396205005`):
+
+## Example: PROCEDURE_OCCURRENCE Table Entry
+
+| Column | Example Value | Description |
+|--------|--------------|-------------|
+| **procedure_occurrence_id** | `34445` | Unique identifier for this procedure record |
+| **person_id** | `1234` | Links to the patient in PERSON table |
+| **procedure_concept_id** | `396205005` | SNOMED CT concept for "CT of brain without contrast" |
+| **procedure_date** | `2025-01-14` | Date when the CT was performed |
+| **procedure_datetime** | `2025-01-14 10:30:00` | Exact datetime of the CT scan |
+| **procedure_type_concept_id** | `44786630` | "Primary procedure" (from Type Concept vocabulary) |
+| **modifier_concept_id** | `0` | No modifier for this procedure |
+| **quantity** | `1` | One CT scan performed |
+| **provider_id** | `789` | Radiologist who performed/supervised the scan |
+| **visit_occurrence_id** | `23899` | Links to the encounter/visit |
+| **visit_detail_id** | `NULL` | Optional - specific visit detail |
+| **procedure_source_value** | `70450` | CPT code for CT head/brain without contrast |
+| **procedure_source_concept_id** | `2211176` | Concept ID for CPT code 70450 |
+| **modifier_source_value** | `NULL` | No modifier in source data |
+
+## Key Points from the Paper:
+
+1. **Linking to IMAGE_OCCURRENCE**: This procedure record would be referenced in the IMAGE_OCCURRENCE table via the `procedure_occurrence_id` field
+
+2. **Multiple Series**: As noted in the paper, one CT procedure may generate multiple DICOM series (e.g., different reconstructions), all linking back to this single procedure record
+
+3. **Standard Vocabularies**: The paper emphasizes using SNOMED CT for procedures, which is why we use concept ID `396205005`
+
+4. **Provenance**: The procedure_type_concept_id helps track where this data came from (e.g., EHR, billing, radiology system)
+
+This structure allows the imaging extension tables (IMAGE_OCCURRENCE and IMAGE_FEATURE) to maintain proper relationships with the clinical data while preserving the standard OMOP CDM conventions.

@@ -19,6 +19,9 @@ book:
       chapters: 
         - "contents/map_age.qmd"
         - "contents/map_sex.qmd"
+    - part: Map by table
+      chapters: 
+        - "contents/map_table/map_procedure_occ_row.qmd"
     - part: Concept
       chapters: 
         - "contents/concept/omop_image_feature_event.qmd"
