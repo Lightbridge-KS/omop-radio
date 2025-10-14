@@ -1,0 +1,167 @@
+# `Image_feature` Table
+
+
+## Image feature vs findings
+
+::: {.callout-note appearance="default" collapse="false"}
+**Q:** From the paper, explain these columns from Image_feature table
+
+* `image_feature_concept_id` 
+* `image_finding_concept_id` 
+
+What are the difference. Give example.
+:::
+
+
+Based on the OMOP CDM Medical Imaging extension paper, here's the difference between these two columns in the `Image_feature` table:
+
+**image_feature_concept_id** (Required)
+
+- **Purpose**: Identifies **individual, specific features or characteristics** extracted from an image
+- **Vocabulary**: Uses standard vocabularies like LOINC or RadLex
+- **Description**: Represents granular measurements or characteristics
+
+**image_finding_concept_id** (Optional)
+
+- **Purpose**: Identifies **groupings of related image features** 
+- **Vocabulary**: Often uses RadLex terms
+- **Description**: Provides a mechanism to group multiple related features under a higher-level finding
+
+### Example from the Paper: Lung Nodule
+
+The paper provides a clear chest CT example with two nodules:
+
+**Nodule 1 (left-lower-lobe):**
+
+- **image_finding_concept_id**: "nodule" (the overall finding)
+- **image_feature_concept_id** entries could include:
+  - "8 mm" (size measurement)
+  - "solid" (texture characteristic)
+  - Specific anatomical location
+
+**Nodule 2 (right-upper-lobe):**
+
+- **image_finding_concept_id**: "nodule" (same overall finding type)
+- **image_feature_concept_id** entries could include:
+  - "12 mm" (size measurement)  
+  - "part solid" (texture characteristic)
+  - Specific anatomical location
+
+### Key Relationship
+
+As stated in the paper:
+
+> The image_finding_id will be a unique key for each imaging finding. A set of images may contain multiple imaging findings, each with multiple features.
+
+This creates a **one-to-many relationship** where:
+- One finding (like "nodule") can have multiple associated features
+- Each feature is an individual characteristic that describes that finding
+- The `image_finding_id` field links related features together
+
+This structure allows researchers to query both at the granular feature level (e.g., all nodules that are "solid") and at the finding level (e.g., all patients with lung nodules regardless of their specific characteristics).
+
+## `Thrombus` in Stroke 
+
+
+::: {.callout appearance="default" collapse="false"}
+**Q:** In the IMAGE_FEATURE table, let's say I have `image_finding_concept_id` = 4245118 (Thrombus)
+
+In this case, the "Thrombus" refers to a segmentation mask (performed by radiologists) from a brain CT series. 
+
+How do I fill other columns in this IMAGE_FEATURE table?
+:::
+
+
+Based on the OMOP CDM Medical Imaging extension paper, here's how to fill the IMAGE_FEATURE table for a thrombus segmentation mask from brain CT:
+
+### Required Columns
+
+**image_feature_id** 
+- Auto-generated unique ID (e.g., 9001, 9002, 9003 for each feature)
+
+**person_id**
+- The patient's ID from the Person table
+
+**image_occurrence_id**
+- Links to the brain CT series in IMAGE_OCCURRENCE table
+
+**image_feature_concept_id** (Required)
+
+These are the **specific features** you extract from the segmentation. 
+
+Examples:
+- Volume measurement → LOINC code for "volume"
+- Maximum diameter → LOINC/RadLex code for "diameter"
+- Hounsfield units (density) → LOINC code for CT attenuation
+- Location descriptor → RadLex anatomical location
+
+**image_feature_type_concept_id** (Required)
+
+Describes **how** the feature was created:
+- For manual segmentation by radiologist → concept for "manual segmentation"
+- For AI-assisted segmentation → concept for the specific algorithm used
+
+### Important Linking Columns
+
+
+**image_feature_event_field_concept_id** + **image_feature_event_id**
+
+These link to where the actual **values** are stored:
+- For measurements → links to MEASUREMENT table
+- For observations → links to OBSERVATION table
+
+### Grouping Columns
+
+**image_finding_concept_id**
+- 4245118 (Thrombus) - as you specified
+
+**image_finding_id**
+- A unique integer to group all features of THIS specific thrombus
+- Same value across all feature rows for this thrombus
+
+### Additional Context
+
+**anatomic_site_concept_id**
+- Specific brain location (e.g., middle cerebral artery, basilar artery)
+
+**alg_system**
+- For manual segmentation: "manual_segmentation_v1" or radiologist identifier
+- For software: URI/version of segmentation tool
+
+**alg_datetime**
+- Timestamp when segmentation was performed
+
+### Example Rows
+
+```
+Row 1 (Volume):
+- image_feature_id: 9001
+- image_feature_concept_id: [LOINC for volume]
+- image_finding_concept_id: 4245118 (Thrombus)
+- image_finding_id: 5001
+- anatomic_site_concept_id: [Middle cerebral artery]
+- Value: Stored in MEASUREMENT table (e.g., 2.3 mL)
+
+Row 2 (Maximum diameter):
+- image_feature_id: 9002  
+- image_feature_concept_id: [LOINC for diameter]
+- image_finding_concept_id: 4245118 (Thrombus)
+- image_finding_id: 5001 (same as Row 1)
+- anatomic_site_concept_id: [Middle cerebral artery]
+- Value: Stored in MEASUREMENT table (e.g., 8.5 mm)
+
+Row 3 (Mean HU):
+- image_feature_id: 9003
+- image_feature_concept_id: [LOINC for CT attenuation]
+- image_finding_concept_id: 4245118 (Thrombus)
+- image_finding_id: 5001 (same as Rows 1&2)
+- anatomic_site_concept_id: [Middle cerebral artery]
+- Value: Stored in MEASUREMENT table (e.g., 65 HU)
+```
+
+### Key Points:
+
+- Each **row** represents one feature of the thrombus
+- All features of the same thrombus share the same `image_finding_id`
+- The actual segmentation mask file location could be stored in `alg_system` or referenced through the IMAGE_OCCURRENCE table
+- Values go in clinical domain tables (MEASUREMENT/OBSERVATION), not in IMAGE_FEATURE itself
