@@ -26,6 +26,9 @@ book:
     - part: Concept
       chapters: 
         - "contents/concept/omop_image_feature_event.qmd"
+    - part: Discuss
+      chapters: 
+        - "contents/discuss/omop-for-research.qmd"
 
 
 bibliography: references.bib

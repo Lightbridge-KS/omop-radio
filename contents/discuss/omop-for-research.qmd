@@ -1,0 +1,142 @@
+# OMOP for Research?
+
+
+I'll discuss your concerns about using OMOP CDM for research datasets. These are very legitimate issues that highlight the tension between OMOP's healthcare-oriented design and research dataset requirements.
+
+## Concern 1: Person ID Collision Across Datasets
+
+
+This is a **fundamental data linkage problem** in research contexts:
+
+```
+Scenario 1: Same person, different datasets
+=========================================
+Stroke Dataset          Lung Dataset
+person_id: 12345   ?    person_id: 12345
+(Brain CT)              (CXR)
+
+Are these the same person or different people?
+```
+
+**The Problem:**
+- In hospital data warehouses, `person_id` is naturally unique across all encounters
+- In curated research datasets, `person_id` might be:
+  - **Re-identified locally** within each dataset (same person = same ID)
+  - **Independently assigned** per dataset (same person = different IDs)
+  - **Collision risk** (different persons with same ID across datasets)
+
+**Why This Matters for OMOP:**
+- OMOP assumes a **single, unified person registry** where each `person_id` uniquely identifies one individual across ALL tables and datasets
+- If you insert both datasets into the same OMOP database:
+  - FK constraints will link data by `person_id`
+  - You might incorrectly merge records from different people
+  - Or miss linkages for the same person
+
+**Potential Solutions:**
+
+```
+Solution A: Namespace Person IDs
+================================
+Stroke Dataset: person_id = 1_12345 (prefix: 1)
+Lung Dataset:   person_id = 2_12345 (prefix: 2)
+
+Pros: Prevents collision
+Cons: Loses ability to link same person across datasets
+```
+
+```
+Solution B: Master Person Registry
+===================================
+       Master Registry
+              |
+      +-------+-------+
+      |               |
+  Stroke Map      Lung Map
+  Local → OMOP    Local → OMOP
+  
+Requires: Re-identification capability
+```
+
+## Concern 2: Visit Concept in Research Context
+
+
+```
+Hospital Scenario (Natural fit)
+================================
+Patient → ER Visit (2024-01-15)
+           ├─ Lab measurements
+           ├─ Radiology
+           └─ Medications
+
+Research Scenario (Awkward fit)
+================================
+Subject → ??? "Visit" ???
+          └─ Single imaging study
+          
+What is a "visit" here?
+- Recruitment date?
+- Imaging date?
+- Synthetic visit?
+```
+
+**The Problem:**
+- OMOP's `measurement`, `observation`, `procedure_occurrence` tables have **mandatory FK** to `visit_occurrence_id`
+- Research datasets often have:
+  - No traditional "visit" concept
+  - Just imaging studies with timestamps
+  - No inpatient/outpatient/ER classification
+
+**Why This is Awkward:**
+1. **Forced artificial visit creation**: You must create synthetic visits just to satisfy FK constraints
+2. **Loss of semantic meaning**: What does `visit_type_concept_id` mean for a research imaging session?
+3. **Granularity mismatch**: Is each imaging study a separate visit? Or is the entire research protocol one visit?
+
+**Common Workarounds:**
+
+```
+Option 1: One visit per imaging study
+======================================
+person_id: 12345
+  visit_1 (2024-01-15) → Brain CT
+  visit_2 (2024-02-20) → Brain CT follow-up
+
+Pros: Preserves temporal structure
+Cons: Inflates visit counts artificially
+```
+
+```
+Option 2: One visit per dataset enrollment
+===========================================
+person_id: 12345
+  visit_1 (enrollment date)
+    ├─ All measurements
+    ├─ All imaging
+    └─ All procedures
+
+Pros: Minimal visit records
+Cons: Loses temporal relationships
+```
+
+## Core Issue: OMOP's Healthcare vs Research Paradigm
+
+
+```
+Healthcare Data Model          Research Dataset Model
+===================           ====================
+Continuous care               Discrete studies
+├─ Multiple visits            ├─ Single protocol
+├─ Longitudinal records       ├─ Cross-sectional samples
+├─ Natural person linkage     ├─ Privacy-preserved IDs
+└─ Institution-wide IDs       └─ Dataset-specific IDs
+
+        vs
+
+OMOP assumes →  Healthcare Model
+```
+
+**Key Tensions:**
+
+1. **Identity persistence**: OMOP expects stable person IDs across all data
+2. **Visit-centric design**: Everything must belong to a visit encounter
+3. **Longitudinal assumption**: Designed for ongoing patient care, not research snapshots
+4. **Institution scope**: Assumes single data source with unified governance
