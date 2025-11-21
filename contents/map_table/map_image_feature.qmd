@@ -29,6 +29,19 @@ Based on the OMOP CDM Medical Imaging extension paper, here's the difference bet
 
 ### Example from the Paper: Lung Nodule
 
+
+```
+FINDING (high-level)
+  └── FEATURE(s) (specific measurements/characteristics)
+        └── VALUE (stored in MEASUREMENT/OBSERVATION)
+
+Example from paper (Lung nodule):
+FINDING: "Nodule" 
+  └── FEATURE: "Size" → VALUE: 8mm
+  └── FEATURE: "Density" → VALUE: "solid"
+  └── FEATURE: "Location" → VALUE: "left lower lobe"
+```
+
 The paper provides a clear chest CT example with two nodules:
 
 **Nodule 1 (left-lower-lobe):**
