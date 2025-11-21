@@ -29,6 +29,7 @@ book:
     - part: Discuss
       chapters: 
         - "contents/discuss/omop-for-research.qmd"
+        - "contents/discuss/omop-for-research-gemini.md"
 
 
 bibliography: references.bib
