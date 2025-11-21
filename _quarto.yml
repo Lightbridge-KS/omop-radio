@@ -30,6 +30,7 @@ book:
       chapters: 
         - "contents/discuss/omop-for-research.qmd"
         - "contents/discuss/omop-for-research-gemini.md"
+        - "contents/discuss/omop-for-research-claude.md"
 
 
 bibliography: references.bib
