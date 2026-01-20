@@ -1,0 +1,185 @@
+---
+title: "Multi-site OMOP CDM pooling strategies for national health data networks"
+---
+
+Thailand can build a centralized or federated national OMOP database using proven approaches from international networks, with **Siriraj Hospital's SiData+ already serving as a foundation**. The optimal strategy depends on governance priorities: Korea's **FeederNet** offers a federated model achieving 57 hospitals and 71 million patients through streamlined IRB agreements, while the US **N3C** demonstrates centralized pooling of 75+ sites via a secure cloud enclave. Both approaches use similar technical foundations—site-prefixed person_IDs, consistent date-shifting, and standardized vocabularies—but differ fundamentally in where patient-level data resides.
+
+---
+
+## Three architectural patterns dominate global OMOP networks
+
+International OMOP initiatives cluster into three distinct architectures, each representing different tradeoffs between analytical power and data governance complexity.
+
+**Centralized pooling** physically consolidates patient-level data from multiple sites into a single database. The US National COVID Cohort Collaborative (N3C) exemplifies this approach, aggregating **17.6 billion rows from 75+ institutions** into a Palantir Foundry-based enclave on AWS. Sites submit data via sFTP; a central pipeline harmonizes four different source CDMs (OMOP, PCORnet, ACT, TriNetX) into OMOP 5.3.1. N3C achieves this through robust legal infrastructure: a **central IRB at Johns Hopkins**, standardized Data Transfer Agreements for contributors, and Data Use Agreements for analysts. All computation occurs within the secure enclave—patient-level data never leaves.
+
+**Federated/distributed networks** keep data at source institutions while executing standardized analysis code remotely. OHDSI's global network spans **330+ databases across 34 countries** using this model. ATLAS generates cohort definitions and study packages (R/SQL code) that sites execute locally; only aggregate results return to study coordinators for meta-analysis via the EvidenceSynthesis package. This eliminates data sharing agreements for patient data entirely—sites share only summary statistics. Korea's **FeederNet** adapts this model nationally, connecting 57 hospitals (72% of Korean tertiary hospitals) through a central portal that orchestrates distributed queries while data remains behind hospital firewalls.
+
+**Hybrid approaches** combine elements of both. France's Health Data Hub operates a centralized platform for SNDS (national claims data) while supporting federated analysis across hospital partners. DARWIN EU, the European Medicines Agency's network, requires pre-converted OMOP databases but executes studies in a federated manner across 20+ data partners, 16 of which overlap with the EHDEN network.
+
+| Network | Architecture | Scale | Database Platform | Primary Use Case |
+|---------|--------------|-------|-------------------|------------------|
+| N3C (US) | Centralized | 75+ sites, 17.6B rows | Palantir Foundry/AWS | COVID-19 research |
+| OHDSI | Federated | 330+ databases globally | Site choice (PostgreSQL, Redshift, Spark) | Multi-database studies |
+| FeederNet (Korea) | Federated | 57 hospitals, 71M patients | OHDSI tools (ATLAS) | National collaborative research |
+| EHDEN (Europe) | Federated | 210 sources, 850M records | Site choice | Drug safety, regulatory |
+| Health Data Hub (France) | Centralized | 3M+ patients (OMOP subset) | National platform | National health data access |
+
+---
+
+## Thailand's emerging OMOP ecosystem centers on Siriraj Hospital
+
+**Siriraj Hospital (SiData+)** has developed Thailand's most mature OMOP implementation, providing a critical foundation for national expansion. Their system encompasses **2.5 million patients, 49 million clinic visits, and 235 million lab records** spanning 20+ years of EHR data. The implementation timeline reveals a methodical four-year journey: discovery of OMOP in 2020, participation in OHDSI APAC ETL workshops in 2021, three iterations of data transformation (2022-2024), and deployment of ATLAS and a secure research environment in 2024.
+
+Siriraj's vocabulary mapping demonstrates successful adaptation of Thai medical terminologies to OMOP standards. Thai diagnoses coded in **ICD-10-TM** map to SNOMED and ICDO3; Thai Medical Laboratory Terminology (TMLT) maps through LOINC; and **Thai Medicines Terminology (TMT)** maps to RxNorm Extension. Their technical stack has evolved from dbt to SQLMesh for ETL orchestration, with ATLAS deployment for cohort building and feasibility assessment.
+
+Key lessons from Siriraj's experience directly inform national strategy:
+- Data transformation requires deep understanding of source EHR structure, OMOP conventions, clinical semantics, and research expectations—much of this knowledge is tacit
+- Local concept codes are acceptable for early internal research but limit cross-institutional comparability
+- Researcher engagement is critical for adoption—the transition from traditional data access methods creates friction
+- Data Quality Dashboard provides basic QC but requires active clinical researcher involvement for meaningful validation
+
+Other major Thai academic medical centers—**Ramathibodi, Chulalongkorn, and Chiang Mai University**—lack publicly documented OMOP implementations, representing the primary expansion opportunity. Thailand's regulatory framework encompasses 927 government hospitals, 363 private hospitals, and universal health coverage through three government schemes, providing a comprehensive data landscape for national pooling.
+
+---
+
+## ID management strategies prevent collision across pooled sites
+
+The fundamental technical challenge in multi-site OMOP pooling is preventing **person_id collision**—ensuring unique identifiers when combining data from institutions that each assign their own patient IDs starting from 1. Four main strategies address this challenge, each with distinct tradeoffs.
+
+**Site-prefix concatenation** prepends a site identifier to local IDs. The EHDEN UK Biobank ETL uses this pattern for visit_occurrence_id: `<source_digit><eid><index>`, creating 16-digit BIGINT values where the first digit indicates data source (1=baseline, 2=covid, 3=hospital episodes, 4=GP data). This approach maintains readability and traceability but requires BIGINT data types and coordination across sites.
+
+**ID range allocation** assigns non-overlapping ranges to each site (e.g., Site A: 1-999,999; Site B: 1,000,000-1,999,999). This requires minimal coordination and works within standard INT bounds for smaller networks but demands careful capacity planning and wastes address space.
+
+**Sequential generation with mapping tables** maintains a tracking table linking source identifiers to newly generated sequential IDs:
+
+```sql
+INSERT INTO internal_patient_tracking
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY source_patient_id) + max_person_id AS person_id,
+    source_patient_id AS person_source_value
+FROM new_patients;
+```
+
+This stays within INT bounds and offers flexibility but adds ETL complexity. The OHDSI community recommends this approach with PostgreSQL/SQL Server database sequences for thread-safe concurrent ETL.
+
+**N3C's centralized harmonization** regenerates all IDs after data arrives at the central enclave. Sites submit data with original IDs; the central pipeline assigns new globally unique identifiers while maintaining crosswalk tables for provenance. A dedicated **DATA_PARTNER_ID** field tracks source institution, and Privacy-Preserving Record Linkage (via Datavant) assigns a Global Person ID when the same patient appears at multiple sites.
+
+For Thailand's multi-hospital pooling, the **site-prefix approach** offers the best balance: Ramathibodi could use prefix '01', Siriraj '02', Chiang Mai '03', with local IDs following. This enables both centralized pooling and federated analysis while maintaining clear data provenance.
+
+---
+
+## Schema conventions enable site identification without CDM modifications
+
+OMOP's standard schema already provides mechanisms for multi-site identification without requiring custom extensions. The **care_site** table serves as the primary vehicle—create one record per contributing institution and link via care_site_id in visit_occurrence and visit_detail. The **cdm_source** table documents each data source's metadata, ETL specifications, and vocabulary versions.
+
+For more granular tracking, the **cohort** tables enable site-based patient groupings:
+
+```sql
+-- Define site cohorts
+INSERT INTO cohort_definition (cohort_definition_id, cohort_definition_name)
+VALUES (1001, 'Ramathibodi Patients'), (1002, 'Siriraj Patients'), (1003, 'CMU Patients');
+
+-- Populate cohort membership
+INSERT INTO cohort (cohort_definition_id, subject_id, cohort_start_date, cohort_end_date)
+SELECT 1002, person_id, observation_period_start_date, observation_period_end_date
+FROM observation_period WHERE care_site_id = 2;
+```
+
+The **_type_concept_id** fields (condition_type_concept_id, drug_type_concept_id, etc.) can indicate data provenance through custom concepts in a local vocabulary extension. Source-to-concept mapping tables support site-specific vocabulary mappings when local coding practices differ across institutions.
+
+For ETL audit trails, custom extension tables track transformation runs, record counts, and source-to-CDM mappings. These fall outside the standard OMOP specification but are essential for multi-site quality management.
+
+---
+
+## De-identification requires layered privacy protections
+
+Multi-site OMOP pooling demands rigorous de-identification, with approaches varying by regulatory context. Thailand should adopt a framework combining **consistent date-shifting, field suppression, and statistical disclosure control**.
+
+**Date shifting** must apply the same random offset to all events for a given person_id. N3C shifts dates algorithmically across all temporal tables (observation_period, visit_occurrence, condition_occurrence, drug_exposure, etc.) while maintaining a Limited Data Set tier with true dates for restricted access. The offset amount should be documented for authorized users conducting temporal analyses.
+
+**Field-level suppression** targets identifiers embedded in OMOP fields. All *_source_value fields containing raw institutional data require masking or removal. The person_source_value field must never contain MRN or national ID—only pseudonymous identifiers. Free-text in NOTE tables requires NLP de-identification or removal. Geographic fields (latitude/longitude in LOCATION table) should be eliminated entirely.
+
+**Statistical disclosure control** through k-anonymity, l-diversity, and t-closeness protects against re-identification attacks. A Korean study applying these methods to OMOP-CDM data using the **ARX framework** demonstrated dramatic risk reduction: DRUG_EXPOSURE table re-identification risk dropped from 11.3% to <0.4% after applying l-diversity (l=5). For rare diseases or small cell sizes, minimum thresholds of 5-11 records before reporting align with international standards.
+
+**N3C's three-tier model** offers a template for Thailand:
+1. **Synthetic tier**: Computationally derived data for broad access and tool development
+2. **De-identified tier**: Safe Harbor compliant with shifted dates and truncated ZIP codes
+3. **Limited Data Set tier**: Full dates and geography with restricted access requiring additional agreements
+
+---
+
+## Governance models range from streamlined IRB to comprehensive legal frameworks
+
+Korea's **Research Free Zone (RFZ)** model offers particular relevance for Thailand. Twenty-four Korean hospitals operate under streamlined research agreements where a **single IRB approval is effective across all RFZ hospitals**, and external researchers gain the same data access authority as in-hospital researchers. This dramatically reduces administrative burden while maintaining ethical oversight.
+
+N3C's governance structure, while more complex, demonstrates scalability to 75+ sites. Key elements include:
+- **Central IRB** at Johns Hopkins via SMART IRB Master Common Reciprocal reliance agreement
+- **Data Transfer Agreements (DTA)** for contributing organizations
+- **Data Use Agreements (DUA)** for accessing organizations (separate from contribution agreements)
+- **Data Use Requests (DUR)** for each project, reviewed by a Data Access Committee
+- **Certificate of Confidentiality** protecting identifiable research information
+- **FedRAMP Moderate authorization** for security compliance
+
+European networks navigate GDPR through federated architectures where data never leaves source institutions. EHDEN's 187 data partners across 29 countries maintain local OMOP databases; only aggregate analysis results are shared. The forthcoming **European Health Data Space (EHDS)** regulation (entering force March 2027) will formalize requirements for processing in accredited secure environments, prohibition on re-identification attempts, and output vetting to minimize disclosure risks.
+
+For Thailand, a **hybrid governance approach** combining Korea's streamlined IRB model with N3C's tiered data access would balance accessibility with protection. A national coordinating body could oversee data sharing agreements, while individual hospitals maintain data custody.
+
+---
+
+## Database platforms and cloud infrastructure vary by architecture choice
+
+Centralized architectures favor managed cloud platforms with strong security controls. N3C uses **Palantir Foundry on AWS** (FedRAMP Moderate authorized) under a $59.5 million contract, with Adeptia handling ETL pipeline orchestration. France's Health Data Hub operates a national platform (specific infrastructure undisclosed publicly) for SNDS data.
+
+Federated networks support heterogeneous database platforms. OHDSI's SqlRender package translates SQL across **PostgreSQL, SQL Server, Oracle, Amazon Redshift, Spark, Synapse, and Snowflake**. Korean FeederNet hospitals maintain individual databases with OHDSI tools (ATLAS, ACHILLES, DQD) deployed locally. Germany's MIRACUM consortium standardized on PostgreSQL across 8 university hospitals.
+
+Deployment options range from simple to enterprise-scale:
+- **OHDSI-in-a-Box**: Windows VM with PostgreSQL for learning environments
+- **OHDSIonAWS**: Enterprise architecture with Amazon Redshift + PostgreSQL
+- **Broadsea**: Docker-based deployment for containerized environments
+
+Thailand's existing technical foundation at Siriraj (dbt/SQLMesh ETL, ATLAS deployment) suggests **PostgreSQL with Docker containerization** as a practical starting point, with potential migration to cloud infrastructure (AWS, Google Cloud, or Azure) as the network scales.
+
+---
+
+## Vocabulary harmonization requires sustained mapping effort
+
+Cross-site OMOP networks achieve interoperability through mapping local terminologies to OHDSI standard vocabularies: **SNOMED CT** for conditions, **RxNorm/RxNorm Extension** for drugs, **LOINC** for laboratory measurements, and **CPT4/SNOMED** for procedures.
+
+Asian networks report high but not perfect mapping rates:
+
+| Country | Condition Mapping | Drug Mapping | Key Challenge |
+|---------|------------------|--------------|---------------|
+| Korea | 99.9% (ICD-10→SNOMED) | 86.7% (domestic→RxNorm) | Korean EDI vocabulary integration |
+| Taiwan | 97.9% (ICD-9→SNOMED) | 86.7% (domestic→RxNorm) | Historical ICD-9 codes |
+| Japan | 99.5% (ICD-10→SNOMED) | 70.7% (domestic→RxNorm) | YJ/HOT drug code complexity |
+| Thailand (Siriraj) | ICD-10-TM→SNOMED | TMT→RxNorm Extension | TMLT→LOINC mapping maturity |
+
+Germany's MIRACUM consortium achieved **98.8% ICD-10-GM mapping** but found German OPS procedures required vocabulary extension. France's Health Data Hub employed medical interns to map thousands of codes across CCAM (procedures), NABM (lab tests), and CSARR (rehabilitation) to SNOMED CT.
+
+Thailand's mapping foundation through TMT (Thai Medicines Terminology) to RxNorm and TMLT (Thai Medical Laboratory Terminology) to LOINC positions the country well, though completion of mappings across all participating hospitals will require coordinated effort.
+
+---
+
+## Recommendations for Thailand's national OMOP pooling strategy
+
+Based on international experience, Thailand should consider a **phased federated-to-hybrid approach** starting with existing capabilities:
+
+**Phase 1 (Year 1): Federated network establishment**
+- Formalize **OHDSI Thailand Chapter** (already in discussion via Siriraj)
+- Extend Siriraj's OMOP implementation as reference architecture for Ramathibodi, Chulalongkorn, and Chiang Mai
+- Adopt Korea's Research Free Zone model for streamlined multi-site IRB
+- Establish FeederNet-style portal for distributed query coordination
+- Standardize ID management using site-prefix concatenation (01-Ramathibodi, 02-Siriraj, 03-CMU, etc.)
+
+**Phase 2 (Years 2-3): Vocabulary and quality harmonization**
+- Complete Thai vocabulary mappings (TMT, TMLT, ICD-10-TM) with coordinated clinical expert review
+- Deploy Data Quality Dashboard across all sites with shared threshold standards
+- Implement consistent date-shifting protocols (±30 days recommended)
+- Establish de-identification pipeline using ARX or similar tools
+
+**Phase 3 (Years 3-5): Optional centralized tier**
+- Evaluate need for centralized de-identified data repository (similar to N3C LDS tier)
+- Consider cloud platform selection (AWS, Azure, or domestic options)
+- Implement Privacy-Preserving Record Linkage for cross-site patient deduplication if longitudinal cohorts required
+
+The federated foundation ensures compliance with Thai data protection requirements while enabling immediate collaborative research. Centralization becomes an option—not a requirement—once governance and technical foundations mature. Korea's trajectory from 6 hospitals (2019) to 57 hospitals (2022) with 12,500+ analyses demonstrates the achievable scale through this approach.

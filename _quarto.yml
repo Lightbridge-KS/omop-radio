@@ -31,6 +31,10 @@ book:
         - "contents/discuss/omop-for-research.qmd"
         - "contents/discuss/omop-for-research-gemini.md"
         - "contents/discuss/omop-for-research-claude.md"
+    - part: Solution
+      chapters: 
+        - text: Multi-site OMOP Pooling
+          href: "contents/solutions/multisite-omop-pooling-strategy.qmd"
 
 
 bibliography: references.bib
