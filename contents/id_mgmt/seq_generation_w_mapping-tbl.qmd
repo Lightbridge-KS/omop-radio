@@ -1,0 +1,126 @@
+---
+title: "Sequential ID Generation with Mapping Tables"
+---
+
+## Concept Explanation
+
+This pattern creates a **crosswalk/lookup table** that links original source identifiers to newly generated sequential IDs. It's commonly used in:
+
+- Data warehousing (surrogate keys)
+- Healthcare data transformations (e.g., OMOP CDM)
+- De-identification pipelines
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        MAPPING TABLE CONCEPT                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   SOURCE DATA                         TRACKING/MAPPING TABLE        │
+│   ───────────                         ──────────────────────        │
+│                                                                     │
+│   ┌──────────────────┐                ┌───────────┬───────────────┐ │
+│   │ source_patient_id│                │ person_id │ person_source │ │
+│   ├──────────────────┤   ROW_NUMBER   │ (new seq) │    _value     │ │
+│   │ "HN-A001"        │ ─────────────► │    1001   │  "HN-A001"    │ │
+│   │ "HN-B042"        │  + max_offset  │    1002   │  "HN-B042"    │ │
+│   │ "HN-C789"        │                │    1003   │  "HN-C789"    │ │
+│   └──────────────────┘                └───────────┴───────────────┘ │
+│                                                                     │
+│   max_person_id = 1000 (existing max ID in the system)              │
+│   New IDs start from 1001, 1002, 1003, ...                          │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## SQL Breakdown
+
+```sql
+INSERT INTO internal_patient_tracking
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY source_patient_id) + max_person_id AS person_id,
+    --│                  │                            │
+    --│                  │                            └─ Offset to avoid ID collision
+    --│                  └─ Deterministic ordering (reproducible)
+    --└─ Generates 1, 2, 3, ... for each row
+    
+    source_patient_id AS person_source_value  -- Keep original ID for lookup
+FROM new_patients;
+```
+
+| Component | Purpose |
+|-----------|---------|
+| `ROW_NUMBER() OVER (...)` | Generate sequential integers (1, 2, 3, ...) |
+| `ORDER BY source_patient_id` | Ensure deterministic, reproducible ordering |
+| `+ max_person_id` | Offset to continue from existing max ID |
+| Mapping columns | Enable bidirectional lookup (new ↔ source) |
+
+---
+
+## dplyr Equivalent
+
+```r
+library(dplyr)
+
+# Assume: 
+#   - new_patients: tibble with column `source_patient_id`
+#   - max_person_id: integer (e.g., from existing DB)
+
+internal_patient_tracking <- new_patients |>
+
+
+  # Ensure deterministic order (like ORDER BY in SQL)
+  arrange(source_patient_id) |>
+  
+  # Generate sequential IDs with offset
+
+
+  mutate(
+    person_id = row_number() + max_person_id,
+    person_source_value = source_patient_id
+  ) |>
+  
+  # Select only the mapping columns
+  select(person_id, person_source_value)
+```
+
+### Complete Working Example
+
+```r
+library(dplyr)
+
+# Simulated existing max ID in your system
+max_person_id <- 1000L
+
+# New patients to be assigned IDs
+new_patients <- tibble(
+  source_patient_id = c("HN-C789", "HN-A001", "HN-B042"),
+  admission_date = as.Date(c("2024-01-15", "2024-01-10", "2024-01-12"))
+)
+
+# Generate mapping table
+internal_patient_tracking <- new_patients |>
+  arrange(source_patient_id) |>
+  mutate(
+    person_id = row_number() + max_person_id,
+    person_source_value = source_patient_id
+  ) |>
+  select(person_id, person_source_value)
+
+internal_patient_tracking
+#> # A tibble: 3 × 2
+#>   person_id person_source_value
+#>       <int> <chr>              
+#> 1      1001 HN-A001            
+#> 2      1002 HN-B042            
+#> 3      1003 HN-C789
+```
+
+---
+
+## Key Considerations
+
+| Aspect | Note |
+|--------|------|
+| **Determinism** | `arrange()` before `row_number()` ensures reproducible IDs |
+| **Concurrency** | In production DBs, use `SEQUENCE` or DB-native auto-increment |
+| **Lookup direction** | This table enables both `person_id → source` and `source → person_id` joins |

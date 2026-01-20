@@ -35,6 +35,10 @@ book:
       chapters: 
         - text: Multi-site OMOP Pooling
           href: "contents/solutions/multisite-omop-pooling-strategy.qmd"
+    - part: ID Generation
+      chapters: 
+        - text: Sequential ID Generation
+          href: "contents/id_mgmt/seq_generation_w_mapping-tbl.qmd"
 
 
 bibliography: references.bib
